@@ -1,5 +1,5 @@
 #################################################
-# Example config for two Ericsson MINI-LINK TNs #
+# Example config to test pySNMPdaq on localhost #
 #################################################
 #
 # 'ID', 'IP',  and 'OID_dict' are mandatory. Additional keys may
