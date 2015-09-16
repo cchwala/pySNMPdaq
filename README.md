@@ -34,3 +34,18 @@ Install the dependencies. Clone this repository or download it as ZIP file
  
 * if a non standard python path (e.g. because of a virtual environment) is used, copy over the files from SYSTEM-PYTHON-PATH/dist-packages
 * to get the MIBS follow instructions from [https://wiki.debian.org/SNMP](here) 
+
+# Usage
+
+* Adjust the configuration for logging, file names, directories, file transfer, etc. in `config.py`.
+* Put the list of IP addresse and OIDs in the file `mw_link_OID_listing.py`, which currently is configured to only acquire the uptime of `localhost` as an example that can be run on your local machine without access to a remote machine. An example of a listing for two microwave links is given in the file `mw_link_OID_listing_example.py`.
+* Start the pySNMPdaq daemon with
+ 
+ ```
+ pySNMPdaqd start
+ ```
+* You can stop the daemon using hte command
+ 
+ ```
+ pySNMPdaqd stop
+ ```
