@@ -1,6 +1,6 @@
-# Python SNMP data acquisition system for commercial microwave links
+#`pySNMPdaq`
 
-This is a package for real-time data acquisition of commercial microwave links via SNMP
+A flexible Python SNMP data acquisition system designed for hydrometeorological applications of commercial microwave links.
 
 # Installation
 
