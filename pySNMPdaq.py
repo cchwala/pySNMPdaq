@@ -322,8 +322,8 @@ class SnmpDAQSession():
         
         self.trigger_queue = Queue()
         
-        self.is_idle = Event()
-        self.is_idle.set()
+        self._is_idle = True
+        #self._is_idle.set()
 
         self.var_list = netsnmp.VarList()
         for oid in self.oid_list:
@@ -358,7 +358,7 @@ class SnmpDAQSession():
 
     def _query(self):
         # Tell everybody that we are busy now
-        self.is_idle.clear()
+        self._is_idle = False
         #logging.debug(' busy')
         #print self.IP + ' BUSY'
                 
@@ -405,7 +405,7 @@ class SnmpDAQSession():
         self.var_list = var_list
 
         # Tell everybody that we are idle now        
-        self.is_idle.set()
+        self._is_idle = True
 
         #logging.debug(' idle')
         #print self.IP +  ' IDLE'
@@ -898,7 +898,7 @@ class SessionTimer():
             logging.debug('------------ TRIGGER --------------')
             for session in self.SnmpDAQSessions:
                 # check that the query process has already finished
-                if session.is_idle.is_set():
+                if session._is_idle == True:
                     #logging.debug(' trigger!')
                     session.trigger_queue.put('TRIGGER')
                 else:
