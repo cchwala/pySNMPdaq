@@ -320,7 +320,9 @@ class SnmpDAQSession():
         self.oid_name_list = oid_dict.keys()
         self.mw_link_record = build_empty_mw_link_record_array(oid_dict)        
         
-        self.trigger_queue = Queue()
+        #self.trigger_queue = Queue()
+        self.trigger = Event()
+        self.trigger.clear()
         
         self._is_idle = True
         #self._is_idle.set()
@@ -340,19 +342,26 @@ class SnmpDAQSession():
         # Start process that listens for query triggers 'TRIGGER'        
         self.listener_process.start()
 
-    def stop_listener(self):
-        self.trigger_queue.put('STOP')
+    #def stop_listener(self):
+    #    self.trigger_queue.put('STOP')
 
     def _listener_loop(self):  
         # Ignore SIGINT to be able to handle it in
         # main() and close processes cleanly
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started SNMPSession listener loop with PID %d', getpid())
-        message = self.trigger_queue.get()
-        while message != 'STOP':
-            if message == 'TRIGGER':
-                self._query()
-            message = self.trigger_queue.get()
+
+        #message = self.trigger_queue.get()
+        #while message != 'STOP':
+        #    if message == 'TRIGGER':
+        #        self._query()
+        #    message = self.trigger_queue.get()
+
+        while True:
+            self.trigger.wait()
+            self._query()
+            self.trigger.clear()
+        
         logging.debug('=== ' + str(self.ID) + 
                       ' received STOP. Exiting listener loop... ===')
 
@@ -900,7 +909,8 @@ class SessionTimer():
                 # check that the query process has already finished
                 if session._is_idle == True:
                     #logging.debug(' trigger!')
-                    session.trigger_queue.put('TRIGGER')
+                    #session.trigger_queue.put('TRIGGER')
+                    session.trigger.set()
                 else:
                     logging.warning('SessionTimer has detected a timeout of ' +
                                     'SNMP request at MwLinkSite with IP' 
