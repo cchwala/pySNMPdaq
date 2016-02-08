@@ -19,6 +19,8 @@ import pandas as pd
 
 DATA_FILE_FORMAT_VERSION = '1.0'
 
+GLOBAL_CONTINUE = True
+
 def pySNMPdaq_loop():
     ''' 
     The main loop for pySNMPdaq that is run till infinity 
@@ -171,12 +173,15 @@ def pySNMPdaq_loop():
         for session in snmpDAQSessions:
             #print 'Terminating SNMP query processe...'
             session.listener_process.terminate()
+            logging.debug('snmpDAQSession terminated...')
             #print 'Joining SNMP query processe...'
             session.listener_process.join()
         logging.debug('Trying to stop timer process...')
         sessionTimer.stop()
         logging.debug('Trying to stop dataHandler processes...')
         dataHandler.stop()
+        sleep(0.1)        
+        logging.debug('Clean up done. Exit!')
         print 'Exit!'
  
  
@@ -319,12 +324,11 @@ class SnmpDAQSession():
         self.oid_name_list = oid_dict.keys()
         self.mw_link_record = build_empty_mw_link_record_array(oid_dict)        
         
-        #self.trigger_queue = Queue()
         self.trigger = Event()
         self.trigger.clear()
         
         self._is_idle = True
-        #self._is_idle.set()
+
 
         self.var_list = netsnmp.VarList()
         for oid in self.oid_list:
@@ -349,12 +353,6 @@ class SnmpDAQSession():
         # main() and close processes cleanly
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started SNMPSession listener loop with PID %d', getpid())
-
-        #message = self.trigger_queue.get()
-        #while message != 'STOP':
-        #    if message == 'TRIGGER':
-        #        self._query()
-        #    message = self.trigger_queue.get()
 
         while True:
             self.trigger.wait()
@@ -489,12 +487,10 @@ class DataHandler():
         self.ssh_remotepath = ssh_remotepath
         self.ssh_refugium_dir = ssh_refugium_dir
 
-        self.KEEP_RUNNING = Event()
+        self.KEEP_RUNNING = True
         self.NEW_DataFrame = Event()
         self.WRITE_TO_FILE = Event()               
-        
-        self.KEEP_RUNNING.set()
-        
+               
         self._open_new_file()
         self.NEW_DataFrame.set()
         
@@ -512,7 +508,7 @@ class DataHandler():
         # main() and close processes cleanly
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started DataHandler listener loop with PID %d', getpid())
-        while self.KEEP_RUNNING.is_set():
+        while self.KEEP_RUNNING:
             logging.debug('_listener_loop is waiting for message')
             message = self.new_file_trigger_queue.get()
             logging.debug('_listener_loop got message %s', message)
@@ -532,9 +528,10 @@ class DataHandler():
     def _data_handler_loop(self):
         # Ignore SIGINT to be able to handle it in 
         # main() and close processes cleanly
+        self.record = None
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started DataHandler data_handler loop with PID %d', getpid())
-        while self.KEEP_RUNNING.is_set():
+        while self.KEEP_RUNNING:
             sleep(0.01)
             if self.WRITE_TO_FILE.is_set():
                 # wirte to file, call for new DataFrame,
@@ -550,6 +547,8 @@ class DataHandler():
             # be writen to file when WRITE_TO_FILE Event is set
             while self.query_results_queue.empty() == False:
                 self.record = self.query_results_queue.get()
+                if self.record == 'EXIT':
+                    break
                 if self.NEW_DataFrame.is_set():
                     self.df = pd.DataFrame(self.record)
                     self.df.set_index('Timestamp_UTC', inplace=True)
@@ -561,6 +560,8 @@ class DataHandler():
                     self.df = self.df.append(df_temp)
                     self.df = reorder_columns_of_DataFrame(self.df)
                     #print ' grown DataFrame \n' + str(self.df.tail(1))
+            if self.record == 'EXIT':
+                break
         logging.debug('Exit DataHandler._data_handler_loop')
 
     def _ssh_loop(self):
@@ -569,7 +570,7 @@ class DataHandler():
         # main() and close processes cleanly
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started DataHandler ssh_loop with PID %d', getpid())
-        while self.KEEP_RUNNING.is_set():
+        while self.KEEP_RUNNING:
             message = self.ssh_filename_queue.get()
             logging.debug('_ssh_loop got message %s',message)
 
@@ -679,9 +680,9 @@ class DataHandler():
         self.ssh_loop_process.start()
 
     def stop(self):
-        logging.debug('DataHandler.stop: clearing KEEP_RUNNIG')
-        self.KEEP_RUNNING.clear()
-        #sleep(1)        
+        #logging.debug('DataHandler.stop: clearing KEEP_RUNNIG')
+        #self.KEEP_RUNNING = False
+        #sleep(0.1)        
         
         # Write out last data to file
         try:
@@ -696,7 +697,8 @@ class DataHandler():
         # Send EXIT message via queues and terminate processes
         logging.debug('DataHandler.stop: sending EXIT')
         self.ssh_filename_queue.put('EXIT')
-        self.new_file_trigger_queue('EXIT')
+        self.new_file_trigger_queue.put('EXIT')
+        self.query_results_queue.put('EXIT')
         sleep(0.1)
         self.ssh_loop_process.terminate()
         self.listener_loop_process.terminate()
