@@ -97,8 +97,7 @@ def pySNMPdaq_loop():
     # Init a SNMP-DAQ session for each link
     for link in mw_link_OID_listing.mw_link_list:
         try:
-            snmpDAQSessions.append(
-                SnmpDAQSession(IP=link['IP'],
+            snmpDAQSession = SnmpDAQSession(IP=link['IP'],
                                ID=link['ID'],
                                oid_dict=link['OID_dict'],
                                SNMP_VERSION=config.SNMP_VERSION,
@@ -109,17 +108,17 @@ def pySNMPdaq_loop():
                                WRITE_TO_STDOUT=config.WRITE_TO_STD_OUT,
                                timeout=config.SNMP_TIMEOUT_SEC*1000000,
                                retries=config.SNMP_RETRIES,
-                               query_results_queue=query_results_queue))
+                               query_results_queue=query_results_queue)
+            # Start the listener processes
+            snmpDAQSession.start_listener()
+    
             logging.debug('Started snmpDAQSession for %s', 
                           link['ID'])
+            snmpDAQSessions.append(snmpDAQSession)
         except:
             logging.warning('Could not start snmpDAQSession for %s', 
                             link['ID'])
 
-    # Start the queue listener processes
-    for snmpDAQSession in snmpDAQSessions:
-        snmpDAQSession.start_listener()
-    
     # Init DataHandler
     dataHandler = DataHandler(query_results_queue=query_results_queue,
                               new_file_trigger_queue=new_file_trigger_queue,
