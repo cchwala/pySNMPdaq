@@ -19,7 +19,6 @@ import pandas as pd
 
 DATA_FILE_FORMAT_VERSION = '1.0'
 
-GLOBAL_CONTINUE = True
 
 def pySNMPdaq_loop():
     ''' 
