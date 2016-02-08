@@ -44,8 +44,10 @@ Install the dependencies. Clone this repository or download it as ZIP file
  ```
  pySNMPdaqd start
  ```
-* You can stop the daemon using hte command
+* You can stop the daemon using the command
  
  ```
  pySNMPdaqd stop
  ```
+ 
+The notebook [`Example for building the OID dict list for Ericsson MINI LINK TN systems`](https://github.com/cchwala/pySNMPdaq/blob/master/notebooks/Example%20for%20building%20the%20OID%20dict%20list%20for%20Ericsson%20MINI%20LINK%20TN%20systems.ipynb) shows how to generate the necessary OID dict list and provides functions to ease this task for Ericsson MINI LINK TN systems.
