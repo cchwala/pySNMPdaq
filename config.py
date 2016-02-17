@@ -5,9 +5,9 @@ import logging
 
 LOG_DIR = '/tmp/pySNMPdaq'
 LOG_FILE = 'pySNMPdaq.log'
-LOG_LEVEL = logging.INFO
+LOG_LEVEL = logging.DEBUG
 
-WRITE_TO_STD_OUT = True
+WRITE_TO_STD_OUT = False
 
 # Data file config
 # ---------------
