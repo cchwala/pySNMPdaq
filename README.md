@@ -2,6 +2,19 @@
 
 A flexible Python SNMP data acquisition system designed for hydrometeorological applications of commercial microwave links.
 
+# Test it using a VirtualMachine (VM) image
+
+Install [VirtualBox](https://www.virtualbox.org/), dowload the [VM image](https://drive.google.com/open?id=0B-spzN5NShBEbGZVai1ZUEpaVEU) and start the VM via VirtualBox
+
+The VM runs a minimal Debian installation with the following login:
+
+ * username: daq-user
+ * password: daq-user
+
+`pySNMPdaq` is setup up with a test configuration. This test configuration only polls SNMP data localy (here, as example the, uptime) so that no remote access to a commecrial microwave link is needed. 
+
+You will have to change the OID listing file to poll data from other IPs and change the respective OID entries to poll the data you want. An example OID listing file for polling TX and RX data from two Ericsson MINI-LINK Traffic Nodes (here, with random IP addresses) is available in the `pySNMPdaq` directory on the VM. 
+
 # Installation
 
 Install the dependencies. Clone this repository or download it as ZIP file
@@ -39,15 +52,15 @@ Install the dependencies. Clone this repository or download it as ZIP file
 
 * Adjust the configuration for logging, file names, directories, file transfer, etc. in `config.py`.
 * Put the list of IP addresse and OIDs in the file `mw_link_OID_listing.py`, which currently is configured to only acquire the uptime of `localhost` as an example that can be run on your local machine without access to a remote machine. An example of a listing for two microwave links is given in the file `mw_link_OID_listing_example.py`.
-* Start the pySNMPdaq daemon with
+* From the `pySNMPdaq` directory start the pySNMPdaq daemon with
  
  ```
- pySNMPdaqd start
+ ./pySNMPdaqd.py start
  ```
 * You can stop the daemon using the command
  
  ```
- pySNMPdaqd stop
+ ./pySNMPdaqd.py stop
  ```
  
 The notebook [`Example for building the OID dict list for Ericsson MINI LINK TN systems`](https://github.com/cchwala/pySNMPdaq/blob/master/notebooks/Example%20for%20building%20the%20OID%20dict%20list%20for%20Ericsson%20MINI%20LINK%20TN%20systems.ipynb) shows how to generate the necessary OID dict list and provides functions to ease this task for Ericsson MINI LINK TN systems.
