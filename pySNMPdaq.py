@@ -13,29 +13,39 @@ from os import getpid, makedirs, path
 from multiprocessing import Event, Process, Queue
 from datetime import datetime
 from time import sleep, time
+from collections import namedtuple
 
 import numpy as np
 import pandas as pd
 
+# Configuration file for SNMP, paths and timers
+import config
+
 DATA_FILE_FORMAT_VERSION = '1.0'
+
+# Define messages that will be sent over the different queues
+Message = namedtuple('Message', ['type', 'content'])
+NEW_FILE_MESSAGE = Message(type='trigger', content='new file')
+STOP_MESSAGE = Message(type='control', content='stop')
+# Example for a message to start SNMP queries, here for query batch #1
+# START_SNMP_QUERIES = Message(type='trigger', content=1)
 
 
 def pySNMPdaq_loop():
-    ''' 
-    The main loop for pySNMPdaq that is run till infinity 
+    """
+    The main loop for pySNMPdaq that is run till infinity
 
     This function takes care of all the initialization for the startup
     and all the cleaning up for the termination of pySNMPdaq. It can be
-    called directly. Then it is terminated by Ctrl+C. Or it can be 
+    called directly. Then it is terminated by Ctrl+C. Or it can be
     called as the run method of a daemon. Then it is terminated by SIGTERM.
 
     It reads the config from the local file config.py and the list of IPs
-    and OIDs from mw_link_OID_listing.py.        
-    
-    '''
+    and OIDs from mw_link_OID_listing.py.
+
+    """
 
     # Parse configuration
-    import config    
 
     # Start logging
     make_sure_path_exists(config.LOG_DIR, do_logging=False)
@@ -68,28 +78,75 @@ def pySNMPdaq_loop():
 
     # Save a timestamped copy of the config file
     config_file_name = save_timestamped_config_and_mw_links_list(
-                            config,
                             mw_link_OID_listing)
     logging.info('Current config file: %s', config_file_name)
 
-    # TODO: 
-    #  -Refactor startup of all Processes to avoid the mess below... 
-    #  -Refactor timers so that they are seperated
-    #
-    
-    # Init timers    
+    # Seperate OID_listings for different timers
+    ip_oid_list_per_timer = {}
+    for ip_oid_entry in mw_link_OID_listing.mw_link_list:
+        timer_n = ip_oid_entry['timer']
+        if timer_n not in ip_oid_list_per_timer.keys():
+            ip_oid_list_per_timer[timer_n] = []
+        ip_oid_list_per_timer[timer_n].append(ip_oid_entry)
 
-    # Init dataHandler
+    import pprint
+    print 'ip_oid_list_per_timer'
+    pprint.pprint((ip_oid_list_per_timer))
 
-    # Init SNMPdaqSessions
+    timer_ids = ip_oid_list_per_timer.keys()
 
-    # Connect timers to message queues
+    print '\ntimer_ids'
+    print timer_ids
+
+    # Assert that differnt query timers do not interfere
+    if config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC * len(timer_ids) > config.SNMP_QUERY_MAIN_WAIT_SEC:
+        raise ValueError('The temporal offset between the SNMP request batches will interfere with '
+                         'the main wait time between the requests, i.e. between request i of batch#1 and '
+                         'request i+1 of batch#1.')
+
+    # Init timers for SNMP queries
+    query_trigger_queue = Queue()
+    query_timers = []
+    for i_timer, timer_id in enumerate(timer_ids):
+        query_timers.append(Timer(n_sec=config.SNMP_QUERY_MAIN_WAIT_SEC,
+                                  offset_sec=config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC*i_timer,
+                                  target_queue=query_trigger_queue,
+                                  message=Message(type='trigger', content=timer_id)))
+
+    # Init DataHandler and its Timer that triggers the creation of a new file
+    query_results_queue = Queue()
+    new_file_trigger_queue = Queue()
+    new_file_timer = Timer(n_sec=10,
+                           target_queue=new_file_trigger_queue,
+                           message=NEW_FILE_MESSAGE)
+
+    dataHandler = DataHandler(query_results_queue=query_results_queue,
+                              new_file_trigger_queue=new_file_trigger_queue,
+                              data_dir=config.DATA_DIR,
+                              filename_prefix=config.FILENAME_PREFIX,
+                              current_config_file=config_file_name,
+                              archive_files=config.ARCHIVE_FILES,
+                              archive_dir=config.ARCHIVE_DIR,
+                              put_data_to_out_dir=config.PUT_DATA_TO_OUT_DIR,
+                              data_out_dir=config.DATA_OUT_DIR,
+                              ssh_transfer=config.SSH_TRANSFER,
+                              ssh_user=config.SSH_USER,
+                              ssh_server=config.SSH_SERVER,
+                              ssh_remotepath=config.SSH_REMOTEPATH,
+                              ssh_refugium_dir=config.SSH_REFUGIUM_DIR)
+    dataHandler.start()
+
+    # Start timers
+    new_file_timer.start()
+    for query_timer in query_timers:
+        query_timer.start()
+
+    return
+
 
     # ------------------------------------
     # Messy startup
-    from multiprocessing import Queue
-    from pySNMPdaq import SnmpDAQSession, DataHandler, SessionTimer
-    
+
     query_results_queue = Queue()
     new_file_trigger_queue = Queue()
     
@@ -120,28 +177,6 @@ def pySNMPdaq_loop():
             logging.warning('Could not start snmpDAQSession for %s', 
                             link['ID'])
 
-    # Init DataHandler
-    dataHandler = DataHandler(query_results_queue=query_results_queue,
-                              new_file_trigger_queue=new_file_trigger_queue,
-                              data_dir=config.DATA_DIR,
-                              filename_prefix=config.FILENAME_PREFIX,
-                              current_config_file=config_file_name,
-                              archive_files=config.ARCHIVE_FILES,
-                              archive_dir=config.ARCHIVE_DIR,
-                              put_data_to_out_dir=config.PUT_DATA_TO_OUT_DIR,
-                              data_out_dir=config.DATA_OUT_DIR,
-                              ssh_transfer=config.SSH_TRANSFER,
-                              ssh_user=config.SSH_USER,
-                              ssh_server=config.SSH_SERVER,
-                              ssh_remotepath=config.SSH_REMOTEPATH,
-                              ssh_refugium_dir=config.SSH_REFUGIUM_DIR)
-    dataHandler.start()
-    
-    # Init timer
-    sessionTimer = SessionTimer(trigger_wait_sec=config.TIMER_1_QUERY_WAIT_SEC,
-                                SnmpDAQSessions=snmpDAQSessions, 
-                                new_file_trigger_queue=new_file_trigger_queue)
-    sessionTimer.start();
     
     #----------------------------------------
     # Messy startup end    
@@ -208,7 +243,7 @@ def make_sure_path_exists(path, do_logging=True):
                 logging.debug('Path %s already existed', path)
 
 
-def save_timestamped_config_and_mw_links_list(config, mw_link_OID_listing):
+def save_timestamped_config_and_mw_links_list(mw_link_OID_listing):
     ''' Save pySNMPdaq config and MW link OID listing in a unified file '''
     import inspect    
     
@@ -290,6 +325,78 @@ def reorder_columns_of_DataFrame(df, order=['MW_link_ID', 'RTT']):
         ordered_columns.append(item)
     ordered_columns += columns
     return df[ordered_columns]
+
+
+def snmp_query(IP, ID, oid_dict, results_queue):
+
+    mw_link_record = build_empty_mw_link_record_array(oid_dict)
+
+    var_list = netsnmp.VarList()
+    for oid in oid_dict.values():
+        logging.debug(' for IP ' + str(IP) + ' appending to var_list: ' + oid)
+        var_list.append(netsnmp.Varbind(oid))
+
+    # Init SNMP Session for different protocol versions
+    if config.SNMP_VERSION == 1 or config.SNMP_VERSION == 2:
+        logging.debug(' open session with SNMPv1 for ' + IP)
+        SnmpSession = netsnmp.Session(DestHost=IP,
+                                      Version=config.SNMP_VERSION,
+                                      Community=config.SNMP_COMMUNITY,
+                                      Timeout=config.SNMP_TIMEOUT_SEC*1000000,
+                                      Retries=config.SNMP_RETRIES)
+    if config.SNMP_VERSION == 3:
+        logging.debug(' open session with SNMPv3 for ' + IP)
+        SnmpSession = netsnmp.Session(DestHost=IP,
+                                      Version=config.SNMP_VERSION,
+                                      SecName=config.SNMP_USERNAME,
+                                      AuthPass=config.SNMP_AUTHPASSWORD,
+                                      AuthProto='MD5',
+                                      PrivProto='DES',
+                                      SecLevel='authNoPriv',
+                                      Timeout=config.SNMP_TIMEOUT_SEC*1000000,
+                                      Retries=config.SNMP_RETRIES)
+    # Start time for round trip time
+    t1 = time()
+    # Send SNMP query
+    query_result = SnmpSession.get(var_list)
+    # Get round trip time (RTT)
+    query_rtt = time() - t1
+    # Put RTT and a timestamp in mw_link_record
+    mw_link_record['Timestamp_UTC'] = np.datetime64(datetime.utcnow(), 'us')
+    mw_link_record['RTT'] = query_rtt
+    mw_link_record['MW_link_ID'] = ID
+
+    # Write SNMP query to mw_link_record according to OIDs
+    for i, oid_name in enumerate(oid_dict.keys()):
+        # print self.IP, self.oid_name_list, self.query_result, i, self.query_result[i]
+        # print self.IP, self.mw_link_record
+        if query_result[i] is not None:
+            mw_link_record[oid_name] = query_result[i]
+        else:
+            mw_link_record[oid_name] = np.NaN
+
+    # Put data into queue for dataHandler process
+    results_queue.put(mw_link_record)
+
+    #
+    # WORKAROUND FOR PROBLEM WITH REPEATED QUERIES OF
+    # Tx-, Rx-, etc. data --> renew varlist
+    #
+    # IS THIS STILL NECESSARY WHEN USING OTHER MW LINKS ???!!
+    #
+    var_list = netsnmp.VarList()
+    for oid in oid_dict.values():
+        # logging.debug(' for IP ' + str(self.mwLinkSite.IPaddress) + ' appending to var_list: ' + oid)
+        var_list.append(netsnmp.Varbind(oid))
+
+    # Tell everybody that we are idle now
+    #self._is_idle = True
+
+    # logging.debug(' idle')
+    # print self.IP +  ' IDLE'
+
+    return
+
 
 class SnmpDAQSession():
     '''SNMP Session for polling data from a MW Link'''
@@ -599,7 +706,7 @@ class DataHandler():
         filename = path.join(self.data_dir,  
                              self.filename_prefix
                              + '_'
-                             + datetime.utcnow().strftime('%Y%m%d_%H%M') 
+                             + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
                              + '.tmp')
         self.data_file = open(filename, 'w')
         logging.debug(' opend data file ' 
@@ -825,7 +932,7 @@ def copy_file_via_scp(filename,
             move(filename, refug_dir)
             print 'file moved to REFUGIUM'   
 
-     
+
 class SessionTimer():
     '''Timer to trigger SNMP queries and streaming to file'''
     def __init__(self,
@@ -855,35 +962,35 @@ class SessionTimer():
         self.file_timer_loop_process.terminate()
         self.trigger_timer_loop_process.join()
         self.file_timer_loop_process.join()
-            
+
     def smart_sleep(self, n_sec=None, n_min=None):
         """ Sleep till next multiple of n_sec or n_min is reached
-        
-            Only one of the arguments can be supplied and the function only 
-            works correctly with n_sec % 60 == 0 and n_min % 60 == 0. Otherwise 
-            there will be jumps at the full minute and hour, respectivliy         
+
+            Only one of the arguments can be supplied and the function only
+            works correctly with n_sec % 60 == 0 and n_min % 60 == 0. Otherwise
+            there will be jumps at the full minute and hour, respectivliy
         """
-    
+
         from time import sleep
         from datetime import datetime, timedelta
         t = datetime.utcnow()
-        
+
         if n_sec != None and n_min == None:
             t_usec = t.second*1e6 + t.microsecond
             t_wait_usec = n_sec*1e6 - (int(t_usec) % int(n_sec*1e6))
             #t_goal_usec = t_usec + t_wait_usec
             t_goal = t + timedelta(t_wait_usec/24.0/60/60/1e6)
-    
+
         elif n_min != None and n_sec == None:
             t_usec = t.minute*60*1e6 + t.second*1e6 + t.microsecond
             t_wait_usec = n_min*60*1e6 - (int(t_usec) % int(n_min*60*1e6))
             #t_goal_usec = t_usec + t_wait_usec
             t_goal = t + timedelta(t_wait_usec/24.0/60/60/1e6)
-        
+
         else:
             raise(ValueError('one of the arguments n_sec or n_min must \
                               be None or must not be supplied'))
-        
+
         t_wait_sec = t_wait_usec/1e6
         sleep((t_wait_sec))
         t_reached = datetime.utcnow()
@@ -899,7 +1006,7 @@ class SessionTimer():
             #print t_reached
 
     def trigger_timer_loop(self):
-        # Ignore SIGINT to be able to handle it in main() 
+        # Ignore SIGINT to be able to handle it in main()
         # and close processes cleanly
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started Timer loop with PID %d', getpid())
@@ -913,21 +1020,113 @@ class SessionTimer():
                     session.trigger.set()
                 else:
                     logging.warning('SessionTimer has detected a timeout of ' +
-                                    'SNMP request at MwLinkSite with IP' 
+                                    'SNMP request at MwLinkSite with IP'
                                     + session.IP)
             self.smart_sleep(self.trigger_wait_sec)
 
     def file_timer_loop(self):
-        # Ignore SIGINT to be able to handle it in main() 
+        # Ignore SIGINT to be able to handle it in main()
         # and close processes cleanly
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         while True:
             logging.debug('-------- NEW FILE TRIGGER ----------')
             # wait for the next full minute and trigger writing to file
             self.smart_sleep(n_min=1)
-            logging.debug('open new file at ' 
+            logging.debug('open new file at '
                           + datetime.utcnow().strftime('%Y%m%d_%H%M%S'))
             self.new_file_trigger_queue.put('WRITE_TO_FILE')
             # sleep 0.1 second to avoid starting the smart_sleep to early
-            # which may cause it not to sleep            
+            # which may cause it not to sleep
             #sleep(0.1)
+
+class QueryDispatcher:
+    def __init__(self, timer_queue, ip_oid_list_per_timer):
+
+class Timer:
+    def __init__(self,target_queue, message, n_sec=None, n_min=None, offset_sec=0, print_debug_info=False):
+        self.target_queue = target_queue
+        self.message = message
+        self.n_sec = n_sec
+        self.n_min = n_min
+        self.offset_sec = offset_sec
+        self.print_debug_info = print_debug_info
+
+        self._keep_running = True
+
+        self._timer_loop_process = Process(target=self._timer_loop)
+
+    def _timer_loop(self):
+        while self._keep_running:
+            smart_sleep(n_sec=self.n_sec,
+                        n_min=self.n_min,
+                        offset_sec=self.offset_sec,
+                        print_debug_info=self.print_debug_info)
+            self.target_queue.put(self.message)
+            if self.print_debug_info:
+                print 'Timer sent message %s' % str(self.message)
+            logging.debug('Timer sent message %s' % str(self.message))
+        logging.debug('Stopping timer who sent message %s' % str(self.message))
+
+    def start(self):
+        self._timer_loop_process.start()
+
+    def stop(self):
+        self._keep_running = False
+        logging.info('Stopping timer with message %s. This may take some time' % str(self.message))
+        if self.n_sec is None:
+            print 'Stopping timer. This may take up to %d minutes' % self.n_min
+        elif self.n_min is None:
+            print 'Stopping timer. This may take up to %d seconds' % self.n_sec
+        else:
+            print 'n_min or n_sec must not be None'
+        self._timer_loop_process.terminate()
+        self._timer_loop_process.join()
+        print 'Timer stopped'
+
+
+def smart_sleep(n_sec=None, n_min=None, offset_sec=0, print_debug_info=False):
+    """ Sleep till next multiple of n_sec or n_min is reached
+
+        Only one of the arguments can be supplied and the function only
+        works correctly with n_sec % 60 == 0 and n_min % 60 == 0. Otherwise
+        there will be jumps at the full minute and hour, respectivliy
+    """
+
+    from time import sleep
+    from datetime import datetime, timedelta
+    t = datetime.utcnow()
+
+    if n_sec != None and n_min == None:
+        t_usec = t.second * 1e6 + t.microsecond
+        t_wait_usec = n_sec * 1e6 - (int(t_usec) % int(n_sec * 1e6))
+
+    elif n_min != None and n_sec == None:
+        t_usec = t.minute * 60 * 1e6 + t.second * 1e6 + t.microsecond
+        t_wait_usec = n_min * 60 * 1e6 - (int(t_usec) % int(n_min * 60 * 1e6))
+
+    else:
+        raise (ValueError('one of the arguments n_sec or n_min must \
+                           be None or must not be supplied'))
+
+    t_wait_sec = t_wait_usec / 1e6
+    t_wait_sec += offset_sec
+    t_goal = t + timedelta(t_wait_sec / 24.0 / 60 / 60)
+
+
+    sleep(t_wait_sec)
+    t_reached = datetime.utcnow()
+
+    if print_debug_info:
+        print 't                  = ', t
+        print 't_goal             = ', t_goal
+
+        print 't_reached          = ', t_reached
+        print 't_reached - t_goal = %d seconds' % (t_reached - t_goal).total_seconds()
+
+    while t_reached < t_goal:
+        t_diff_sec = (t_goal - t_reached).total_seconds()
+        sleep(t_diff_sec)
+        t_reached = datetime.utcnow()
+        if print_debug_info:
+            print '  extra sleep of ' + str(t_diff_sec)
+            print '  t_reached = ', t_reached
