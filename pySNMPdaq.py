@@ -10,7 +10,7 @@ import signal
 import logging
 import errno
 from os import getpid, makedirs, path
-from multiprocessing import Event, Process, Queue
+from multiprocessing import Event, Process, Queue, Pool
 from datetime import datetime
 from time import sleep, time
 from collections import namedtuple
@@ -44,8 +44,6 @@ def pySNMPdaq_loop():
     and OIDs from mw_link_OID_listing.py.
 
     """
-
-    # Parse configuration
 
     # Start logging
     make_sure_path_exists(config.LOG_DIR, do_logging=False)
@@ -81,7 +79,7 @@ def pySNMPdaq_loop():
                             mw_link_OID_listing)
     logging.info('Current config file: %s', config_file_name)
 
-    # Seperate OID_listings for different timers
+    # Separate OID_listings for different timers
     ip_oid_list_per_timer = {}
     for ip_oid_entry in mw_link_OID_listing.mw_link_list:
         timer_n = ip_oid_entry['timer']
@@ -98,27 +96,32 @@ def pySNMPdaq_loop():
     print '\ntimer_ids'
     print timer_ids
 
-    # Assert that differnt query timers do not interfere
-    if config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC * len(timer_ids) > config.SNMP_QUERY_MAIN_WAIT_SEC:
-        raise ValueError('The temporal offset between the SNMP request batches will interfere with '
-                         'the main wait time between the requests, i.e. between request i of batch#1 and '
-                         'request i+1 of batch#1.')
+    # Assert that different query timers do not interfere
+    if (config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC * len(timer_ids)
+        > config.SNMP_QUERY_MAIN_WAIT_SEC):
+        raise ValueError('The temporal offset between the SNMP request '
+                         'batches will interfere with the main wait time '
+                         'between the requests, i.e. between request i '
+                         'of batch#1 and request i+1 of batch#1.')
 
     # Init timers for SNMP queries
     query_trigger_queue = Queue()
     query_timers = []
     for i_timer, timer_id in enumerate(timer_ids):
-        query_timers.append(Timer(n_sec=config.SNMP_QUERY_MAIN_WAIT_SEC,
-                                  offset_sec=config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC*i_timer,
-                                  target_queue=query_trigger_queue,
-                                  message=Message(type='trigger', content=timer_id)))
+        query_timers.append(
+            Timer(n_sec=config.SNMP_QUERY_MAIN_WAIT_SEC,
+                  offset_sec=config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC*i_timer,
+                  target_queue=query_trigger_queue,
+                  message=Message(type='trigger', content=timer_id),
+                  print_debug_info=False))
 
     # Init DataHandler and its Timer that triggers the creation of a new file
     query_results_queue = Queue()
     new_file_trigger_queue = Queue()
-    new_file_timer = Timer(n_sec=10,
+    new_file_timer = Timer(n_sec=config.NEW_FILE_WAIT_SEC,
                            target_queue=new_file_trigger_queue,
-                           message=NEW_FILE_MESSAGE)
+                           message=NEW_FILE_MESSAGE,
+                           print_debug_info=False)
 
     dataHandler = DataHandler(query_results_queue=query_results_queue,
                               new_file_trigger_queue=new_file_trigger_queue,
@@ -140,6 +143,64 @@ def pySNMPdaq_loop():
     new_file_timer.start()
     for query_timer in query_timers:
         query_timer.start()
+
+    # Define signal handler for SIGTERM which is sent to stop loop
+    # when running as daemon.
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
+    # Initialize process pool
+    proc_pool = Pool(2)
+
+    # Start infinite loop. It can be exited by raising SystemExit,
+    # which is done in the signal handler. The 'finally' part than
+    # takes care of stopping all the processes and clean up.
+    try:
+        while True:
+            message = query_trigger_queue.get()
+            timer_id = message.content
+            #print '############## ONE STEP ################'
+            #print message
+            #pprint.pprint(ip_oid_list_per_timer[timer_id])
+            #print '########################################'
+
+            print ''
+            # Start the parallel SNMP queries
+            foo_dict_list = ip_oid_list_per_timer[timer_id]
+            for foo_dict in foo_dict_list:
+                foo_dict['sleep'] = np.random.rand()*3
+            proc_pool.map_async(snmp_query, ip_oid_list_per_timer[timer_id])
+
+    except KeyboardInterrupt:
+        print 'main() received KeyboardInterrupt'
+
+        print 'Exiting timer'
+        new_file_timer.stop()
+        for query_timer in query_timers:
+            query_timer.stop()
+
+        print 'Stopping process pool'
+        proc_pool.close()
+        proc_pool.join()
+
+        print 'Exiting data handler'
+        dataHandler.stop()
+
+    finally:
+        logging.debug('Daemon is trying to clean up!')
+        logging.debug('Trying to stop timer processes...')
+        new_file_timer.stop()
+        for query_timer in query_timers:
+            query_timer.stop()
+
+        logging.debug('Stopping process pool...')
+        proc_pool.close()
+        proc_pool.join()
+
+        logging.debug('Trying to stop dataHandler processes...')
+        dataHandler.stop()
+        sleep(0.1)
+        logging.debug('Clean up done. Exit!')
+        print 'Exit!'
 
     return
 
@@ -316,6 +377,7 @@ def build_str_from_mw_link_record(mw_link_record):
         s += ', '
     return s[:-2]
 
+
 def reorder_columns_of_DataFrame(df, order=['MW_link_ID', 'RTT']):
     ''' Reorder columns of a Pandas DataFrame '''
     columns = df.columns.tolist()
@@ -327,7 +389,31 @@ def reorder_columns_of_DataFrame(df, order=['MW_link_ID', 'RTT']):
     return df[ordered_columns]
 
 
-def snmp_query(IP, ID, oid_dict, results_queue):
+def snmp_query(ip_oid_dict):
+    # Define signal handler for SIGTERM which is sent to stop loop
+    # when running as daemon.
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
+    ID = ip_oid_dict['ID']
+    IP = ip_oid_dict['IP']
+    oid_dict = ip_oid_dict['OID_dict']
+
+    sec_to_sleep =ip_oid_dict['sleep']
+    print ID, datetime.utcnow()
+    print ID, sec_to_sleep
+    sleep(sec_to_sleep)
+    print ID, datetime.utcnow()
+
+    return
+
+    print '### snmp_query ###'
+    print datetime.utcnow()
+    print ID
+    print IP
+    print oid_dict
+    print '##################'
+
+    return
 
     mw_link_record = build_empty_mw_link_record_array(oid_dict)
 
@@ -1039,8 +1125,11 @@ class SessionTimer():
             # which may cause it not to sleep
             #sleep(0.1)
 
+
 class QueryDispatcher:
     def __init__(self, timer_queue, ip_oid_list_per_timer):
+        pass
+
 
 class Timer:
     def __init__(self,target_queue, message, n_sec=None, n_min=None, offset_sec=0, print_debug_info=False):
@@ -1056,6 +1145,10 @@ class Timer:
         self._timer_loop_process = Process(target=self._timer_loop)
 
     def _timer_loop(self):
+        # Ignore SIGINT to be able to handle it in main()
+        # and close processes cleanly
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
         while self._keep_running:
             smart_sleep(n_sec=self.n_sec,
                         n_min=self.n_min,
@@ -1091,6 +1184,10 @@ def smart_sleep(n_sec=None, n_min=None, offset_sec=0, print_debug_info=False):
         works correctly with n_sec % 60 == 0 and n_min % 60 == 0. Otherwise
         there will be jumps at the full minute and hour, respectivliy
     """
+
+    # Ignore SIGINT to be able to handle it in main()
+    # and close processes cleanly
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     from time import sleep
     from datetime import datetime, timedelta
