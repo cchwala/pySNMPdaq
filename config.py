@@ -13,6 +13,7 @@ WRITE_TO_STD_OUT = True
 # ---------------
 WRITE_TO_FILE = True
 FILENAME_PREFIX = 'pySNMPdaq_test'
+DATE_FORMAT = '%Y%m%d_%H%M%S'
 
 # Data directory config
 # ---------------------
@@ -33,8 +34,8 @@ SSH_REFUGIUM_DIR = 'ssh_refugium'
 
 # SNMP config
 # -----------
-SNMP_TIMEOUT_SEC = 2
-SNMP_RETRIES = 1
+SNMP_TIMEOUT_SEC = 0.5
+SNMP_RETRIES = 2
 SNMP_VERSION = 2
 # Used for SNMP v1 and v2
 SNMP_COMMUNITY = 'public'
@@ -44,6 +45,6 @@ SNMP_AUTHPASSWORD = 'example_pw'
 
 # Timer config
 # ------------
-NEW_FILE_WAIT_SEC = 60
-SNMP_QUERY_MAIN_WAIT_SEC = 20
-SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC = 5
+NEW_FILE_WAIT_SEC = 10
+SNMP_QUERY_MAIN_WAIT_SEC = 10
+SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC = 2

@@ -118,15 +118,17 @@ def pySNMPdaq_loop():
     # Init DataHandler and its Timer that triggers the creation of a new file
     query_results_queue = Queue()
     new_file_trigger_queue = Queue()
-    new_file_timer = Timer(n_sec=config.NEW_FILE_WAIT_SEC,
-                           target_queue=new_file_trigger_queue,
-                           message=NEW_FILE_MESSAGE,
-                           print_debug_info=False)
+
+    # new_file_timer = Timer(n_sec=config.NEW_FILE_WAIT_SEC,
+    #                       target_queue=new_file_trigger_queue,
+    #                       message=NEW_FILE_MESSAGE,
+    #                       print_debug_info=False)
 
     dataHandler = DataHandler(query_results_queue=query_results_queue,
                               new_file_trigger_queue=new_file_trigger_queue,
                               data_dir=config.DATA_DIR,
                               filename_prefix=config.FILENAME_PREFIX,
+                              date_format=config.DATE_FORMAT,
                               current_config_file=config_file_name,
                               archive_files=config.ARCHIVE_FILES,
                               archive_dir=config.ARCHIVE_DIR,
@@ -140,7 +142,7 @@ def pySNMPdaq_loop():
     dataHandler.start()
 
     # Start timers
-    new_file_timer.start()
+    #new_file_timer.start()
     for query_timer in query_timers:
         query_timer.start()
 
@@ -149,32 +151,31 @@ def pySNMPdaq_loop():
     signal.signal(signal.SIGTERM, sigterm_handler)
 
     # Initialize process pool
-    proc_pool = Pool(2)
+    proc_pool = Pool(500)
 
     # Start infinite loop. It can be exited by raising SystemExit,
     # which is done in the signal handler. The 'finally' part than
     # takes care of stopping all the processes and clean up.
     try:
         while True:
+            # Wait for trigger from timers
             message = query_trigger_queue.get()
             timer_id = message.content
-            #print '############## ONE STEP ################'
-            #print message
-            #pprint.pprint(ip_oid_list_per_timer[timer_id])
-            #print '########################################'
 
-            print ''
-            # Start the parallel SNMP queries
-            foo_dict_list = ip_oid_list_per_timer[timer_id]
-            for foo_dict in foo_dict_list:
-                foo_dict['sleep'] = np.random.rand()*3
-            proc_pool.map_async(snmp_query, ip_oid_list_per_timer[timer_id])
+            dataHandler.new_file_trigger_queue.put(NEW_FILE_MESSAGE)
+
+            # Start the parallel SNMP queries and
+            # put results in queue for dataHandler
+            proc_pool.map_async(snmp_query,
+                                ip_oid_list_per_timer[timer_id],
+                                callback=query_results_queue.put)
+
 
     except KeyboardInterrupt:
         print 'main() received KeyboardInterrupt'
 
-        print 'Exiting timer'
-        new_file_timer.stop()
+        print 'Exiting timers'
+        # new_file_timer.stop()
         for query_timer in query_timers:
             query_timer.stop()
 
@@ -188,7 +189,7 @@ def pySNMPdaq_loop():
     finally:
         logging.debug('Daemon is trying to clean up!')
         logging.debug('Trying to stop timer processes...')
-        new_file_timer.stop()
+        # new_file_timer.stop()
         for query_timer in query_timers:
             query_timer.stop()
 
@@ -203,81 +204,6 @@ def pySNMPdaq_loop():
         print 'Exit!'
 
     return
-
-
-    # ------------------------------------
-    # Messy startup
-
-    query_results_queue = Queue()
-    new_file_trigger_queue = Queue()
-    
-    snmpDAQSessions = []
-    
-    # Init a SNMP-DAQ session for each link
-    for link in mw_link_OID_listing.mw_link_list:
-        try:
-            snmpDAQSession = SnmpDAQSession(IP=link['IP'],
-                               ID=link['ID'],
-                               oid_dict=link['OID_dict'],
-                               SNMP_VERSION=config.SNMP_VERSION,
-                               community=config.SNMP_COMMUNITY,
-                               password=config.SNMP_AUTHPASSWORD,
-                               username=config.SNMP_USERNAME,
-                               WRITE_TO_FILE=config.WRITE_TO_FILE,
-                               WRITE_TO_STDOUT=config.WRITE_TO_STD_OUT,
-                               timeout=config.SNMP_TIMEOUT_SEC*1000000,
-                               retries=config.SNMP_RETRIES,
-                               query_results_queue=query_results_queue)
-            # Start the listener processes
-            snmpDAQSession.start_listener()
-    
-            logging.debug('Started snmpDAQSession for %s', 
-                          link['ID'])
-            snmpDAQSessions.append(snmpDAQSession)
-        except:
-            logging.warning('Could not start snmpDAQSession for %s', 
-                            link['ID'])
-
-    
-    #----------------------------------------
-    # Messy startup end    
-
-    # Define signal handler for SIGTERM which is sent to stop loop
-    # when running as daemon.        
-    signal.signal(signal.SIGTERM, sigterm_handler)
-
-    # Start infinite loop. It can be exited by raising SystemExit, 
-    # which is done in the signal handler. The 'finally' part than
-    # takes care of stopping all the processes and clean up.
-    try:
-        while True:
-            sleep(1)
-    except KeyboardInterrupt:
-        print 'main() received Ctrl+C'
-        for session in snmpDAQSessions:
-            print 'Terminating SNMP query processe...'
-            session.listener_process.terminate()
-            print 'Joining SNMP query processe...'
-            session.listener_process.join()
-        print 'Exiting timer session'
-        sessionTimer.stop()
-        print 'Exiting data handler'
-        dataHandler.stop()
-    finally:
-        logging.debug('Daemon is trying to clean up!')
-        for session in snmpDAQSessions:
-            #print 'Terminating SNMP query processe...'
-            session.listener_process.terminate()
-            logging.debug('snmpDAQSession terminated...')
-            #print 'Joining SNMP query processe...'
-            session.listener_process.join()
-        logging.debug('Trying to stop timer process...')
-        sessionTimer.stop()
-        logging.debug('Trying to stop dataHandler processes...')
-        dataHandler.stop()
-        sleep(0.1)        
-        logging.debug('Clean up done. Exit!')
-        print 'Exit!'
  
  
 def sigterm_handler(signal, frame):
@@ -398,22 +324,9 @@ def snmp_query(ip_oid_dict):
     IP = ip_oid_dict['IP']
     oid_dict = ip_oid_dict['OID_dict']
 
-    sec_to_sleep =ip_oid_dict['sleep']
-    print ID, datetime.utcnow()
-    print ID, sec_to_sleep
-    sleep(sec_to_sleep)
-    print ID, datetime.utcnow()
-
-    return
-
-    print '### snmp_query ###'
-    print datetime.utcnow()
-    print ID
-    print IP
-    print oid_dict
-    print '##################'
-
-    return
+    # FOR DEBUGGING
+    #
+    #print 'Query for %s ID at %s' % (ID, str(datetime.utcnow()))
 
     mw_link_record = build_empty_mw_link_record_array(oid_dict)
 
@@ -428,9 +341,9 @@ def snmp_query(ip_oid_dict):
         SnmpSession = netsnmp.Session(DestHost=IP,
                                       Version=config.SNMP_VERSION,
                                       Community=config.SNMP_COMMUNITY,
-                                      Timeout=config.SNMP_TIMEOUT_SEC*1000000,
+                                      Timeout=int(config.SNMP_TIMEOUT_SEC*1000000),
                                       Retries=config.SNMP_RETRIES)
-    if config.SNMP_VERSION == 3:
+    elif config.SNMP_VERSION == 3:
         logging.debug(' open session with SNMPv3 for ' + IP)
         SnmpSession = netsnmp.Session(DestHost=IP,
                                       Version=config.SNMP_VERSION,
@@ -439,8 +352,11 @@ def snmp_query(ip_oid_dict):
                                       AuthProto='MD5',
                                       PrivProto='DES',
                                       SecLevel='authNoPriv',
-                                      Timeout=config.SNMP_TIMEOUT_SEC*1000000,
+                                      Timeout=int(config.SNMP_TIMEOUT_SEC*1000000),
                                       Retries=config.SNMP_RETRIES)
+    else:
+        raise ValueError('SNMP_VERSION must be 1, 2 or 3.')
+
     # Start time for round trip time
     t1 = time()
     # Send SNMP query
@@ -462,7 +378,7 @@ def snmp_query(ip_oid_dict):
             mw_link_record[oid_name] = np.NaN
 
     # Put data into queue for dataHandler process
-    results_queue.put(mw_link_record)
+    #results_queue.put(mw_link_record)
 
     #
     # WORKAROUND FOR PROBLEM WITH REPEATED QUERIES OF
@@ -481,7 +397,7 @@ def snmp_query(ip_oid_dict):
     # logging.debug(' idle')
     # print self.IP +  ' IDLE'
 
-    return
+    return mw_link_record
 
 
 class SnmpDAQSession():
@@ -653,6 +569,7 @@ class DataHandler():
                 new_file_trigger_queue=None,
                 data_dir='data',
                 filename_prefix='mw_link_queries',
+                date_format='%Y%m%d_%H%M%S',
                 current_config_file='foobar.baz',
                 archive_files=False,
                 archive_dir='ARCHIVE',
@@ -666,6 +583,7 @@ class DataHandler():
         self.query_results_queue = query_results_queue
         self.new_file_trigger_queue = new_file_trigger_queue
         self.data_dir = data_dir
+        self.date_format = date_format
         self.filename_prefix = filename_prefix
         self.current_config_file = current_config_file
 
@@ -682,7 +600,9 @@ class DataHandler():
         self.KEEP_RUNNING = True
         self.NEW_DataFrame = Event()
         self.WRITE_TO_FILE = Event()               
-               
+
+        self.df = pd.DataFrame()
+
         self._open_new_file()
         self.NEW_DataFrame.set()
         
@@ -704,9 +624,9 @@ class DataHandler():
             logging.debug('_listener_loop is waiting for message')
             message = self.new_file_trigger_queue.get()
             logging.debug('_listener_loop got message %s', message)
-            if message == 'EXIT':
+            if message == STOP_MESSAGE:
                 break
-            if message == 'WRITE_TO_FILE':
+            if message == NEW_FILE_MESSAGE:
                 self.WRITE_TO_FILE.set()
                 # give the data handler some time to write 
                 # DataFrame to file and to initialize new DataFrame
@@ -726,7 +646,7 @@ class DataHandler():
         while self.KEEP_RUNNING:
             sleep(0.01)
             if self.WRITE_TO_FILE.is_set():
-                # wirte to file, call for new DataFrame,
+                # write to file, call for new DataFrame,
                 # close old file and open new one
                 self._write_mw_link_record_to_file()
                 self.NEW_DataFrame.set()
@@ -737,21 +657,30 @@ class DataHandler():
 
             # get data from queue and write to DataFrame which will
             # be writen to file when WRITE_TO_FILE Event is set
-            while self.query_results_queue.empty() == False:
-                self.record = self.query_results_queue.get()
-                if self.record == 'EXIT':
+            while not self.query_results_queue.empty():
+                queue_item = self.query_results_queue.get()
+                # print 'queue_item ', queue_item
+                if queue_item == 'EXIT':
                     break
+                if type(queue_item) == list:
+                    record_list = queue_item
+                else:
+                    record_list = [queue_item, ]
+
                 if self.NEW_DataFrame.is_set():
-                    self.df = pd.DataFrame(self.record)
-                    self.df.set_index('Timestamp_UTC', inplace=True)
+                    self.df = pd.DataFrame()
+                    # self.df.set_index('Timestamp_UTC', inplace=True)
                     self.NEW_DataFrame.clear()
                     logging.debug('----- NEW DataFrame ----')
-                else:
-                    df_temp = pd.DataFrame(self.record)                
-                    df_temp.set_index('Timestamp_UTC', inplace=True)                    
+
+                for record in record_list:
+                    df_temp = pd.DataFrame(record)
+                    df_temp.set_index('Timestamp_UTC', inplace=True)
                     self.df = self.df.append(df_temp)
                     self.df = reorder_columns_of_DataFrame(self.df)
-                    #print ' grown DataFrame \n' + str(self.df.tail(1))
+                print ''
+                print self.df.sort_index()
+
             if self.record == 'EXIT':
                 break
         logging.debug('Exit DataHandler._data_handler_loop')
@@ -764,7 +693,7 @@ class DataHandler():
         logging.debug('Started DataHandler ssh_loop with PID %d', getpid())
         while self.KEEP_RUNNING:
             message = self.ssh_filename_queue.get()
-            logging.debug('_ssh_loop got message %s',message)
+            logging.debug('_ssh_loop got message %s', message)
 
             if message == 'EXIT':
                 break
@@ -792,7 +721,7 @@ class DataHandler():
         filename = path.join(self.data_dir,  
                              self.filename_prefix
                              + '_'
-                             + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                             + datetime.utcnow().strftime(self.date_format)
                              + '.tmp')
         self.data_file = open(filename, 'w')
         logging.debug(' opend data file ' 
@@ -843,12 +772,15 @@ class DataHandler():
 
         # or just move file to archive directory
         if self.archive_files==True:
-            try:            
-                fn_patern = self.filename_prefix + '_%Y%m%d_%H%M.dat.gz'
+            try:
+                fn_pattern = (self.filename_prefix
+                              + '_'
+                              + self.date_format
+                              + '.dat.gz')
                 move_timestamped_file_to_folder_struct(
                     filename=path.split(gz_filename)[1],
                     file_dir=path.split(gz_filename)[0],
-                    filename_pattern=fn_patern,
+                    filename_pattern=fn_pattern,
                     folder_struct_root_dir=path.join(self.data_dir, 
                                                      self.archive_dir))
             except:
@@ -859,9 +791,13 @@ class DataHandler():
             pass
 
     def _write_mw_link_record_to_file(self):
-        self.df.to_csv(self.data_file, 
-                       na_rep='NaN', 
-                       float_format='%.3f')
+        # Write data to file if the DataFrame is
+        # not the empty one which was initialized
+        # in __init__.
+        if not self.df.empty:
+            self.df.sort_index().to_csv(self.data_file,
+                                        na_rep='NaN',
+                                        float_format='%.3f')
 
     def _move_files_to_archive(self):
         pass
@@ -916,11 +852,11 @@ def move_timestamped_file_to_folder_struct(filename,
                                            folder_struct_root_dir,                                           
                                            folder_struct='%Y/%m/%d',
                                            overwrite=False,
-                                           erase_if_exists=False):       
-                                               
+                                           erase_if_exists=False):
+
     timestamp = get_timestamp_from_filename(filename, 
                                             filename_pattern)
-                                            
+
     new_path_str = create_path_str_from_timestamp(timestamp, 
                                                   folder_struct_root_dir, 
                                                   folder_struct)
