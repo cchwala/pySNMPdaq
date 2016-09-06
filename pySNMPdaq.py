@@ -405,171 +405,10 @@ def snmp_query(ip_oid_dict):
 
     return mw_link_record
 
-
-class SnmpDAQSession():
-    '''SNMP Session for polling data from a MW Link'''
-    def __init__(self, 
-                 IP,
-                 ID,
-                 oid_dict,
-                 query_results_queue=Queue(),
-                 SNMP_VERSION=1, community='public',
-                 username=None, password=None,
-                 timeout=2000000, retries=1,
-                 WRITE_TO_STDOUT=True, 
-                 WRITE_TO_FILE=False, 
-                 GROW_DATA_RECORD=False):
-                             
-        self.data_reccord = []
-        self.IP = IP
-        self.ID = ID
-        self.SNMP_VERSION = SNMP_VERSION
-        self.community = community
-        self.username = username
-        self.password = password
-        self.timeout = timeout
-        self.retries = retries
-        self.WRITE_TO_STDOUT = WRITE_TO_STDOUT
-        self.WRITE_TO_FILE = WRITE_TO_FILE
-        self.GROW_DATA_RECORD = GROW_DATA_RECORD
-
-        self.oid_dict = oid_dict
-        self.oid_list = oid_dict.values()
-        self.oid_name_list = oid_dict.keys()
-        self.mw_link_record = build_empty_mw_link_record_array(oid_dict)        
-        
-        self.trigger = Event()
-        self.trigger.clear()
-        
-        self._is_idle = True
-
-
-        self.var_list = netsnmp.VarList()
-        for oid in self.oid_list:
-            #logging.debug(' for IP ' + str(self.mwLinkSite.IPaddress) + ' appending to var_list: ' + oid)
-            self.var_list.append(netsnmp.Varbind(oid))
-
-        # Queue for pushing data to other processes (e.g. data handler)        
-        self.query_results_queue = query_results_queue
-        
-        # Process which listens for incoming triggers in trigger queue
-        self.listener_process = Process(target=self._listener_loop)
-    
-    def start_listener(self):
-        # Start process that listens for query triggers 'TRIGGER'        
-        self.listener_process.start()
-
-    #def stop_listener(self):
-    #    self.trigger_queue.put('STOP')
-
-    def _listener_loop(self):  
-        # Ignore SIGINT to be able to handle it in
-        # main() and close processes cleanly
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        logging.debug('Started SNMPSession listener loop with PID %d', getpid())
-
-        while True:
-            self.trigger.wait()
-            self._query()
-            self.trigger.clear()
-        
-        logging.debug('=== ' + str(self.ID) + 
-                      ' received STOP. Exiting listener loop... ===')
-
-    def _query(self):
-        # Tell everybody that we are busy now
-        self._is_idle = False
-        #logging.debug(' busy')
-        #print self.IP + ' BUSY'
-                
-        # Init SNMP Session for different protocol versions
-        if self.SNMP_VERSION == 1 or self.SNMP_VERSION == 2:
-            logging.debug(' open session with SNMPv1 for ' + self.IP)
-            SnmpSession = netsnmp.Session(DestHost=self.IP,
-                                               Version=self.SNMP_VERSION,
-                                               Community=self.community,
-                                               Timeout=self.timeout,
-                                               Retries=self.retries)
-        if self.SNMP_VERSION == 3:
-            logging.debug(' open session with SNMPv3 for ' + self.IP)
-            SnmpSession = netsnmp.Session(DestHost=self.IP,
-                                               Version=self.SNMP_VERSION,
-                                               SecName=self.username,
-                                               AuthPass=self.password,
-                                               AuthProto='MD5',
-                                               PrivProto='DES',
-                                               SecLevel='authNoPriv',
-                                               Timeout=self.timeout,
-                                               Retries=self.retries)
-        # Start time for round trip time
-        t1 = time()
-        # Send SNMP query
-        self.queryResult = SnmpSession.get(self.var_list)
-        # Get round trip time (RTT)
-        self.queryRTT = time() - t1        
-        # Put queryResults, RTT and a timestamp in mw_link_record
-        self._fill_mw_link_record()    
-        # Stream data to data handler processes        
-        self._streamQueryResult()
-        
-        #
-        # WORKAROUND FOR PROBLEM WITH REPEATED QUERIES OF 
-        # Tx-, Rx-, etc. data --> renew varlist
-        #   
-        # IS THIS STILL NECESSARY WHEN USING OTHER MW LINKS ???!!
-        #
-        var_list = netsnmp.VarList()
-        for oid in self.oid_list:
-            #logging.debug(' for IP ' + str(self.mwLinkSite.IPaddress) + ' appending to var_list: ' + oid)
-            var_list.append(netsnmp.Varbind(oid))
-        self.var_list = var_list
-
-        # Tell everybody that we are idle now        
-        self._is_idle = True
-
-        #logging.debug(' idle')
-        #print self.IP +  ' IDLE'
-
-    def _fill_mw_link_record(self):
-        self._set_mw_link_record_time()
-        self._write_query_result_to_mw_link_record()
-        self.mw_link_record['MW_link_ID'] = self.ID
-        
-
-    def _set_mw_link_record_time(self):
-        self.mw_link_record['Timestamp_UTC'] = np.datetime64(
-                                                    datetime.utcnow(),'us')
-        self.mw_link_record['RTT'] = self.queryRTT
-
-    def _write_query_result_to_mw_link_record(self):
-        ''' Write SNMP query to mw_link_record according to OIDs '''
-        for i, oid_name in enumerate(self.oid_name_list):
-            #print self.IP, self.oid_name_list, self.queryResult, i, self.queryResult[i]
-            #print self.IP, self.mw_link_record
-            if self.queryResult[i] != None:
-                self.mw_link_record[oid_name] =  self.queryResult[i]
-            else:
-                self.mw_link_record[oid_name] =  np.NaN
-
-    def _stream_mw_link_record(self):
-        pass
-
-    def _streamQueryResult(self):
-        record_str = build_str_from_mw_link_record(self.mw_link_record)
-        if self.WRITE_TO_STDOUT:
-            print record_str
-        if self.WRITE_TO_FILE:
-            self.query_results_queue.put(self.mw_link_record)
-        if self.GROW_DATA_RECORD:
-            pass
-            # CHANGE THIS TO FILL THE MW_LINK_PARAMETER
-            #for result in self.queryResult:
-            #    s = s + ' ' + str(result)       
-            #self.data_record.append(s)            
             
-class DataHandler():
-    '''Data handler which will be looped in a seperate process to manage 
-       the data streams from the SNMP queries'''
+class DataHandler:
+    """Data handler which will be looped in a seperate process to manage
+       the data streams from the SNMP queries"""
     def __init__(self,
                 query_results_queue=None,
                 new_file_trigger_queue=None,
@@ -684,8 +523,8 @@ class DataHandler():
                     df_temp.set_index('Timestamp_UTC', inplace=True)
                     self.df = self.df.append(df_temp)
                     self.df = reorder_columns_of_DataFrame(self.df)
-                print ''
-                print self.df.sort_index()
+                #print ''
+                #print self.df.sort_index()
 
             # if self.record == 'EXIT':
             #    break
