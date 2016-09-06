@@ -45,6 +45,7 @@ SNMP_AUTHPASSWORD = 'example_pw'
 
 # Timer config
 # ------------
-NEW_FILE_WAIT_SEC = 10
-SNMP_QUERY_MAIN_WAIT_SEC = 10
+SNMP_QUERY_MAIN_WAIT_SEC = 60
 SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC = 2
+# Currently not used. File creation is triggered by query request
+# NEW_FILE_WAIT_SEC = 10

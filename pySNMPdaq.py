@@ -45,6 +45,8 @@ def pySNMPdaq_loop():
 
     """
 
+    print '\n### Starting pySNMPdaq main loop ###'
+
     # Start logging
     make_sure_path_exists(config.LOG_DIR, do_logging=False)
     logging.basicConfig(filename=path.join(config.LOG_DIR, config.LOG_FILE),
@@ -87,16 +89,18 @@ def pySNMPdaq_loop():
             ip_oid_list_per_timer[timer_n] = []
         ip_oid_list_per_timer[timer_n].append(ip_oid_entry)
 
-    import pprint
-    print 'ip_oid_list_per_timer'
-    pprint.pprint((ip_oid_list_per_timer))
+    print '\n### Number of request per timer batch ###'
+    for i, timer_id in enumerate(ip_oid_list_per_timer.keys()):
+        print('Timer ID: %s  N_requests: %d  '
+              'triggered_every i*%d+%d seconds ' %
+              (timer_id,
+               len(ip_oid_list_per_timer[timer_id]),
+               config.SNMP_QUERY_MAIN_WAIT_SEC,
+               i*config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC)
+              )
 
+    # Assert that different query timers do not interfer
     timer_ids = ip_oid_list_per_timer.keys()
-
-    print '\ntimer_ids'
-    print timer_ids
-
-    # Assert that different query timers do not interfere
     if (config.SNMP_QUERY_BETWEEN_BATCHES_WAIT_SEC * len(timer_ids)
         > config.SNMP_QUERY_MAIN_WAIT_SEC):
         raise ValueError('The temporal offset between the SNMP request '
@@ -142,7 +146,7 @@ def pySNMPdaq_loop():
     dataHandler.start()
 
     # Start timers
-    #new_file_timer.start()
+    # new_file_timer.start()
     for query_timer in query_timers:
         query_timer.start()
 
@@ -170,7 +174,6 @@ def pySNMPdaq_loop():
                                 ip_oid_list_per_timer[timer_id],
                                 callback=query_results_queue.put)
 
-
     except KeyboardInterrupt:
         print 'main() received KeyboardInterrupt'
 
@@ -193,13 +196,16 @@ def pySNMPdaq_loop():
         for query_timer in query_timers:
             query_timer.stop()
 
+        logging.debug('Trying to stop dataHandler processes...')
+        dataHandler.stop()
+        sleep(0.1)
+
         logging.debug('Stopping process pool...')
         proc_pool.close()
         proc_pool.join()
 
-        logging.debug('Trying to stop dataHandler processes...')
-        dataHandler.stop()
-        sleep(0.1)
+
+
         logging.debug('Clean up done. Exit!')
         print 'Exit!'
 
@@ -660,7 +666,7 @@ class DataHandler():
             while not self.query_results_queue.empty():
                 queue_item = self.query_results_queue.get()
                 # print 'queue_item ', queue_item
-                if queue_item == 'EXIT':
+                if queue_item == STOP_MESSAGE:
                     break
                 if type(queue_item) == list:
                     record_list = queue_item
@@ -681,8 +687,9 @@ class DataHandler():
                 print ''
                 print self.df.sort_index()
 
-            if self.record == 'EXIT':
-                break
+            # if self.record == 'EXIT':
+            #    break
+
         logging.debug('Exit DataHandler._data_handler_loop')
 
     def _ssh_loop(self):
@@ -695,7 +702,7 @@ class DataHandler():
             message = self.ssh_filename_queue.get()
             logging.debug('_ssh_loop got message %s', message)
 
-            if message == 'EXIT':
+            if message == STOP_MESSAGE:
                 break
             else:
                 # queue item should be filename
@@ -822,11 +829,11 @@ class DataHandler():
         except:
             logging.warning('DataHandler.stop: could not close file')
 
-        # Send EXIT message via queues and terminate processes
-        logging.debug('DataHandler.stop: sending EXIT')
-        self.ssh_filename_queue.put('EXIT')
-        self.new_file_trigger_queue.put('EXIT')
-        self.query_results_queue.put('EXIT')
+        # Send STOP message via queues and terminate processes
+        logging.debug('DataHandler.stop: sending STOP_MESSAGE')
+        self.ssh_filename_queue.put(STOP_MESSAGE)
+        self.new_file_trigger_queue.put(STOP_MESSAGE)
+        self.query_results_queue.put(STOP_MESSAGE)
         sleep(0.1)
         self.ssh_loop_process.terminate()
         self.listener_loop_process.terminate()
