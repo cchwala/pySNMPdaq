@@ -475,7 +475,7 @@ class DataHandler:
                 self.WRITE_TO_FILE.set()
                 # give the data handler some time to write 
                 # DataFrame to file and to initialize new DataFrame
-                sleep(2)
+                sleep(0.1)
                 # then check if the WRITE_TO_FILE is cleared, 
                 # that is, the file handler has opend new file
                 if self.WRITE_TO_FILE.is_set():
@@ -503,6 +503,11 @@ class DataHandler:
             # get data from queue and write to DataFrame which will
             # be writen to file when WRITE_TO_FILE Event is set
             while not self.query_results_queue.empty():
+                # Step out of this loop if writing to file is in progress
+                if self.WRITE_TO_FILE.is_set():
+                    break
+
+                # Get data from queue
                 queue_item = self.query_results_queue.get()
                 # print 'queue_item ', queue_item
                 if queue_item == STOP_MESSAGE:
