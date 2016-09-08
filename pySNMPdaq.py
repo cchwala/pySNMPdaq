@@ -9,6 +9,10 @@ import netsnmp
 import signal
 import logging
 import errno
+import shutil
+import os
+import gzip
+
 from os import getpid, makedirs, path
 from multiprocessing import Event, Process, Queue, Pool
 from datetime import datetime
@@ -204,8 +208,6 @@ def pySNMPdaq_loop():
         proc_pool.close()
         proc_pool.join()
 
-
-
         logging.debug('Clean up done. Exit!')
         print 'Exit!'
 
@@ -213,7 +215,7 @@ def pySNMPdaq_loop():
  
  
 def sigterm_handler(signal, frame):
-    ''' Handler function to catch SIGTERM and trigger clean exit '''
+    """ Handler function to catch SIGTERM and trigger clean exit """
     logging.debug('pySNMPdaq got SIGTERM')
     import sys
     # Raise SystemExit. That causes the main loop to switch to
@@ -222,22 +224,22 @@ def sigterm_handler(signal, frame):
 
 
 def make_sure_path_exists(path, do_logging=True):
-    ''' Create a path if it does not exist '''
+    """ Create a path if it does not exist """
     try:
         makedirs(path)
-        if do_logging == True:
+        if do_logging:
             logging.debug('Created %s', path)
     except OSError as exception:
         if exception.errno != errno.EEXIST:
             logging.debug('Creation of %s went wrong', path)
             raise
         else:
-            if do_logging == True:
+            if do_logging:
                 logging.debug('Path %s already existed', path)
 
 
 def save_timestamped_config_and_mw_links_list(mw_link_OID_listing):
-    ''' Save pySNMPdaq config and MW link OID listing in a unified file '''
+    """ Save pySNMPdaq config and MW link OID listing in a unified file """
     import inspect    
     
     # Build filename for unified config file
@@ -277,7 +279,7 @@ def save_timestamped_config_and_mw_links_list(mw_link_OID_listing):
 
 
 def build_empty_mw_link_record_array(oid_dict):
-    ''' Build a numpy record array to store MW link query '''
+    """ Build a numpy record array to store MW link query """
     dtype_list = [('Timestamp_UTC', 'datetime64[us]'), 
                   ('MW_link_ID', object),
                   ('RTT', np.float64)]
@@ -294,7 +296,7 @@ def build_empty_mw_link_record_array(oid_dict):
 
 
 def build_str_from_mw_link_record(mw_link_record):
-    ''' Build a nicely formated string for a MW link record '''
+    """ Build a nicely formated string for a MW link record """
     s = ''
     s += mw_link_record['Timestamp_UTC'][0].astype(
                                         datetime).strftime(
@@ -311,7 +313,7 @@ def build_str_from_mw_link_record(mw_link_record):
 
 
 def reorder_columns_of_DataFrame(df, order=['MW_link_ID', 'RTT']):
-    ''' Reorder columns of a Pandas DataFrame '''
+    """ Reorder columns of a Pandas DataFrame """
     columns = df.columns.tolist()
     ordered_columns = []
     for item in order:
@@ -331,8 +333,7 @@ def snmp_query(ip_oid_dict):
     oid_dict = ip_oid_dict['OID_dict']
 
     # FOR DEBUGGING
-    #
-    #print 'Query for %s ID at %s' % (ID, str(datetime.utcnow()))
+    # print 'Query for %s ID at %s' % (ID, str(datetime.utcnow()))
 
     mw_link_record = build_empty_mw_link_record_array(oid_dict)
 
@@ -384,7 +385,7 @@ def snmp_query(ip_oid_dict):
             mw_link_record[oid_name] = np.NaN
 
     # Put data into queue for dataHandler process
-    #results_queue.put(mw_link_record)
+    # results_queue.put(mw_link_record)
 
     #
     # WORKAROUND FOR PROBLEM WITH REPEATED QUERIES OF
@@ -398,7 +399,7 @@ def snmp_query(ip_oid_dict):
         var_list.append(netsnmp.Varbind(oid))
 
     # Tell everybody that we are idle now
-    #self._is_idle = True
+    # self._is_idle = True
 
     # logging.debug(' idle')
     # print self.IP +  ' IDLE'
@@ -410,21 +411,21 @@ class DataHandler:
     """Data handler which will be looped in a seperate process to manage
        the data streams from the SNMP queries"""
     def __init__(self,
-                query_results_queue=None,
-                new_file_trigger_queue=None,
-                data_dir='data',
-                filename_prefix='mw_link_queries',
-                date_format='%Y%m%d_%H%M%S',
-                current_config_file='foobar.baz',
-                archive_files=False,
-                archive_dir='ARCHIVE',
-                put_data_to_out_dir=False,
-                data_out_dir='DATA_OUT',
-                ssh_transfer=False,
-                ssh_user='user',
-                ssh_server='server.com',
-                ssh_remotepath='some_dir',
-                ssh_refugium_dir='REFUGIUM'):
+                 query_results_queue=None,
+                 new_file_trigger_queue=None,
+                 data_dir='data',
+                 filename_prefix='mw_link_queries',
+                 date_format='%Y%m%d_%H%M%S',
+                 current_config_file='foobar.baz',
+                 archive_files=False,
+                 archive_dir='ARCHIVE',
+                 put_data_to_out_dir=False,
+                 data_out_dir='DATA_OUT',
+                 ssh_transfer=False,
+                 ssh_user='user',
+                 ssh_server='server.com',
+                 ssh_remotepath='some_dir',
+                 ssh_refugium_dir='REFUGIUM'):
         self.query_results_queue = query_results_queue
         self.new_file_trigger_queue = new_file_trigger_queue
         self.data_dir = data_dir
@@ -528,8 +529,9 @@ class DataHandler:
                     df_temp.set_index('Timestamp_UTC', inplace=True)
                     self.df = self.df.append(df_temp)
                     self.df = reorder_columns_of_DataFrame(self.df)
-                #print ''
-                #print self.df.sort_index()
+
+                # print ''
+                # print self.df.sort_index()
 
             # if self.record == 'EXIT':
             #    break
@@ -566,7 +568,6 @@ class DataHandler:
                                                         self.archive_dir))
         logging.debug('Exit DataHandler._ssh_loop')
 
-          
     def _open_new_file(self):
         from os import path
         filename = path.join(self.data_dir,  
@@ -576,24 +577,24 @@ class DataHandler:
                              + '.tmp')
         self.data_file = open(filename, 'w')
         logging.debug(' opend data file ' 
-                     + self.data_file.name)
+                      + self.data_file.name)
         self.data_file.write('# File format version: ' 
-                            + DATA_FILE_FORMAT_VERSION
-                            + '\n')
+                             + DATA_FILE_FORMAT_VERSION
+                             + '\n')
         self.data_file.write('# Opend ' 
-                            + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                            + ' UTC\n')
+                             + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                             + ' UTC\n')
         self.data_file.write('# Associated config file: '
-                            + self.current_config_file
-                            + '\n')
+                             + self.current_config_file
+                             + '\n')
         self.data_file.flush()
 
     def _close_file(self):
         from os import rename, path, remove
         # close file
         self.data_file.write('# Closed ' 
-                            + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                            + ' UTC\n')
+                             + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                             + ' UTC\n')
         self.data_file.close()
         # rename file from .tmp to .dat
         tmp_filename = self.data_file.name
@@ -603,11 +604,11 @@ class DataHandler:
         gz_filename = gzip_file(new_filename, delete_source_file=True)
         
         # copy file via ssh
-        if self.ssh_transfer==True:
+        if self.ssh_transfer:
             self.ssh_filename_queue.put(gz_filename)
             
         # copy file to data outbox directory
-        if self.put_data_to_out_dir==True:
+        if self.put_data_to_out_dir:
             from shutil import copy
             # Strip the data path from gzip-ed filename)           
             fn = path.split(gz_filename)[1]
@@ -622,7 +623,7 @@ class DataHandler:
             copy(gz_filename, path.join(self.data_dir, self.data_out_dir))            
 
         # or just move file to archive directory
-        if self.archive_files==True:
+        if self.archive_files:
             try:
                 fn_pattern = (self.filename_prefix
                               + '_'
@@ -659,15 +660,15 @@ class DataHandler:
         self.ssh_loop_process.start()
 
     def stop(self):
-        #logging.debug('DataHandler.stop: clearing KEEP_RUNNIG')
-        #self.KEEP_RUNNING = False
-        #sleep(0.1)        
+        # logging.debug('DataHandler.stop: clearing KEEP_RUNNIG')
+        # self.KEEP_RUNNING = False
+        # sleep(0.1)
         
         # Write out last data to file
         try:
             self._write_mw_link_record_to_file()
         except:
-           logging.warning('DataHandler.stop: could not write file')
+            logging.warning('DataHandler.stop: could not write file')
         try:
             self._close_file()
         except:
@@ -694,8 +695,6 @@ class DataHandler:
 #
 # Some helper functions for file handling
 #
-import shutil
-import os
 
 def move_timestamped_file_to_folder_struct(filename,
                                            file_dir,
@@ -716,44 +715,46 @@ def move_timestamped_file_to_folder_struct(filename,
         logging.debug('Creating new dir: ' + new_path_str)
         makedirs(new_path_str)
     # If there is already a copy of the file there...
-    if path.exists(path.join(new_path_str,filename)):
+    if path.exists(path.join(new_path_str, filename)):
         logging.debug('%s is already at destination directory...', filename)
         # ... overwrite it        
-        if overwrite==True:
+        if overwrite:
             logging.debug(' ...overwriting file in destination dir')
-            shutil.move(path.join(file_dir,filename), new_path_str)
+            shutil.move(path.join(file_dir, filename), new_path_str)
         # ... or just remove original file
-        elif erase_if_exists==True:
+        elif erase_if_exists:
             logging.debug(' ...erasing it')
-            os.remove(path.join(file_dir,filename))
+            os.remove(path.join(file_dir, filename))
     else:
-            logging.debug('Moving %s to %s', filename,new_path_str)
-            shutil.move(path.join(file_dir,filename), new_path_str)
-    
+            logging.debug('Moving %s to %s', filename, new_path_str)
+            shutil.move(path.join(file_dir, filename), new_path_str)
+
+
 def get_timestamp_from_filename(filename, pattern):
     timestamp = datetime.strptime(filename, pattern)
     return timestamp
-    
+
+
 def create_path_str_from_timestamp(timestamp, root_path, path_struct):
     path_str = path.join(root_path, timestamp.strftime(path_struct))
     return path_str
 
+
 def gzip_file(filename, delete_source_file=False):
-    import gzip
-    import os
     gz_filename = filename + '.gz'
     f_in = open(filename, 'rb')
     f_out = gzip.open(gz_filename, 'wb')
     f_out.writelines(f_in)
     f_out.close()
     f_in.close()
-    if delete_source_file == True:
+    if delete_source_file:
         os.remove(filename)
     return gz_filename
 
+
 def listdir_fullpath(directory):
-    import os
     return [os.path.join(directory, f) for f in os.listdir(directory)]
+
 
 def copy_file_via_scp(filename,
                       user='chwala-c', 
@@ -801,18 +802,18 @@ def copy_file_via_scp(filename,
     # If scp copy did not work, move files to REFUGIUM                                      
     else:
         print 'SSH transfer of ' + filename + ' failed'
-        if move_to_refug == True:
+        if move_to_refug:
             move(filename, refug_dir)
             print 'file moved to REFUGIUM'   
 
 
 class SessionTimer():
-    '''Timer to trigger SNMP queries and streaming to file'''
+    """Timer to trigger SNMP queries and streaming to file"""
     def __init__(self,
-                 trigger_wait_sec = 5,
-                 new_file_wait_minutes = 1,
-                 SnmpDAQSessions = None,
-                 new_file_trigger_queue = None
+                 trigger_wait_sec=5,
+                 new_file_wait_minutes=1,
+                 SnmpDAQSessions=None,
+                 new_file_trigger_queue=None
                  ):
         self.trigger_wait_sec = trigger_wait_sec
         self.new_file_wait_minutes = new_file_wait_minutes
@@ -821,7 +822,6 @@ class SessionTimer():
         self.file_sleep_event = Event()
         self.trigger_timer_loop_process = Process(
             target=self.trigger_timer_loop)
-            #target=self.timer, args=(1, ))
         self.file_timer_loop_process = Process(target=self.file_timer_loop)
         self.data_file = None
         self.new_file_trigger_queue = new_file_trigger_queue
@@ -848,16 +848,14 @@ class SessionTimer():
         from datetime import datetime, timedelta
         t = datetime.utcnow()
 
-        if n_sec != None and n_min == None:
+        if n_sec is not None and n_min is None:
             t_usec = t.second*1e6 + t.microsecond
             t_wait_usec = n_sec*1e6 - (int(t_usec) % int(n_sec*1e6))
-            #t_goal_usec = t_usec + t_wait_usec
             t_goal = t + timedelta(t_wait_usec/24.0/60/60/1e6)
 
-        elif n_min != None and n_sec == None:
+        elif n_min is not None and n_sec is None:
             t_usec = t.minute*60*1e6 + t.second*1e6 + t.microsecond
             t_wait_usec = n_min*60*1e6 - (int(t_usec) % int(n_min*60*1e6))
-            #t_goal_usec = t_usec + t_wait_usec
             t_goal = t + timedelta(t_wait_usec/24.0/60/60/1e6)
 
         else:
@@ -865,18 +863,18 @@ class SessionTimer():
                               be None or must not be supplied'))
 
         t_wait_sec = t_wait_usec/1e6
-        sleep((t_wait_sec))
+        sleep(t_wait_sec)
         t_reached = datetime.utcnow()
-        #print t
-        #print t_goal
-        #print t_reached
-        #print (t_reached - t_goal).total_seconds()
+        # print t
+        # print t_goal
+        # print t_reached
+        # print (t_reached - t_goal).total_seconds()
         while t_reached < t_goal:
             t_diff_sec = (t_goal - t_reached).total_seconds()
             sleep(t_diff_sec)
             t_reached = datetime.utcnow()
-            #print 'extra sleep of ' + str(t_diff_sec)
-            #print t_reached
+            # print 'extra sleep of ' + str(t_diff_sec)
+            # print t_reached
 
     def trigger_timer_loop(self):
         # Ignore SIGINT to be able to handle it in main()
@@ -887,9 +885,9 @@ class SessionTimer():
             logging.debug('------------ TRIGGER --------------')
             for session in self.SnmpDAQSessions:
                 # check that the query process has already finished
-                if session._is_idle == True:
-                    #logging.debug(' trigger!')
-                    #session.trigger_queue.put('TRIGGER')
+                if session._is_idle:
+                    # logging.debug(' trigger!')
+                    # session.trigger_queue.put('TRIGGER')
                     session.trigger.set()
                 else:
                     logging.warning('SessionTimer has detected a timeout of ' +
@@ -911,11 +909,6 @@ class SessionTimer():
             # sleep 0.1 second to avoid starting the smart_sleep to early
             # which may cause it not to sleep
             #sleep(0.1)
-
-
-class QueryDispatcher:
-    def __init__(self, timer_queue, ip_oid_list_per_timer):
-        pass
 
 
 class Timer:
@@ -980,11 +973,11 @@ def smart_sleep(n_sec=None, n_min=None, offset_sec=0, print_debug_info=False):
     from datetime import datetime, timedelta
     t = datetime.utcnow()
 
-    if n_sec != None and n_min == None:
+    if n_sec is not None and n_min is None:
         t_usec = t.second * 1e6 + t.microsecond
         t_wait_usec = n_sec * 1e6 - (int(t_usec) % int(n_sec * 1e6))
 
-    elif n_min != None and n_sec == None:
+    elif n_min is not None and n_sec is None:
         t_usec = t.minute * 60 * 1e6 + t.second * 1e6 + t.microsecond
         t_wait_usec = n_min * 60 * 1e6 - (int(t_usec) % int(n_min * 60 * 1e6))
 
@@ -995,7 +988,6 @@ def smart_sleep(n_sec=None, n_min=None, offset_sec=0, print_debug_info=False):
     t_wait_sec = t_wait_usec / 1e6
     t_wait_sec += offset_sec
     t_goal = t + timedelta(t_wait_sec / 24.0 / 60 / 60)
-
 
     sleep(t_wait_sec)
     t_reached = datetime.utcnow()
