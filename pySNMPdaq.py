@@ -332,6 +332,10 @@ def snmp_query(ip_oid_dict):
     IP = ip_oid_dict['IP']
     oid_dict = ip_oid_dict['OID_dict']
 
+    # Get specially port number if supplied, otherwise set it to the default
+    # SNMP port 161
+    port = ip_oid_dict.get("port", 161)
+
     # FOR DEBUGGING
     # print 'Query for %s ID at %s' % (ID, str(datetime.utcnow()))
 
@@ -346,6 +350,7 @@ def snmp_query(ip_oid_dict):
     if config.SNMP_VERSION == 1 or config.SNMP_VERSION == 2:
         logging.debug(' open session with SNMPv1 for ' + IP)
         SnmpSession = netsnmp.Session(DestHost=IP,
+                                      RemotePort=port,
                                       Version=config.SNMP_VERSION,
                                       Community=config.SNMP_COMMUNITY,
                                       Timeout=int(config.SNMP_TIMEOUT_SEC*1000000),
@@ -353,6 +358,7 @@ def snmp_query(ip_oid_dict):
     elif config.SNMP_VERSION == 3:
         logging.debug(' open session with SNMPv3 for ' + IP)
         SnmpSession = netsnmp.Session(DestHost=IP,
+                                      RemotePort=port,
                                       Version=config.SNMP_VERSION,
                                       SecName=config.SNMP_USERNAME,
                                       AuthPass=config.SNMP_AUTHPASSWORD,
