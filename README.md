@@ -1,6 +1,10 @@
-#`pySNMPdaq`
+# `pySNMPdaq`
 
 A flexible Python SNMP data acquisition system designed for hydrometeorological applications of commercial microwave links.
+
+**Reference:**
+
+Chwala, C., Keis, F., and Kunstmann, H.: Real-time data acquisition of commercial microwave link networks for hydrometeorological applications, Atmos. Meas. Tech., 9, 991-999, https://doi.org/10.5194/amt-9-991-2016, 2016. 
 
 # Test it using a VirtualMachine (VM) image
 
