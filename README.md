@@ -8,6 +8,8 @@ Chwala, C., Keis, F., and Kunstmann, H.: Real-time data acquisition of commercia
 
 # Test it using a VirtualMachine (VM) image
 
+**Note:** The version of `pySNMPdaq` on the VM is not up to date.  It does not support staggerd requests in defined batches. Hence, it should only be used for a small number of requests.
+
 Install [VirtualBox](https://www.virtualbox.org/), dowload the [VM image](https://drive.google.com/open?id=0B-spzN5NShBEbGZVai1ZUEpaVEU) and start the VM via VirtualBox
 
 The VM runs a minimal Debian installation with the following login:
