@@ -451,12 +451,7 @@ class DataHandler:
 
         self.KEEP_RUNNING = True
         self.NEW_DataFrame = Event()
-        self.WRITE_TO_FILE = Event()               
-
-        self.df = pd.DataFrame()
-
-        self._open_new_file()
-        self.NEW_DataFrame.set()
+        self.WRITE_TO_FILE = Event()
         
         self.ssh_filename_queue = Queue()
         
@@ -477,11 +472,22 @@ class DataHandler:
             message = self.new_file_trigger_queue.get()
             logging.debug('_listener_loop got message %s', message)
             if message == STOP_MESSAGE:
+                self.KEEP_RUNNING = False
                 break
             if message == NEW_FILE_MESSAGE:
+                # Wait with triggering the write to a new file. We wait the
+                # maximum time that a SNMP query batch takes, determined by
+                # the SNMP timeout (a small offset is also added to be on the
+                # save side). The NEW_FILE_MESSAGE is sent when a new query is
+                # triggered. By waiting here, we approximately get the data
+                # from one SNMP query batch into one file.
+                sleep(config.SNMP_TIMEOUT_SEC * (config.SNMP_RETRIES + 1) + 0.1)
+
+                # Trigger file creation in _data_handler_loop
                 self.WRITE_TO_FILE.set()
+
                 # give the data handler some time to write 
-                # DataFrame to file and to initialize new DataFrame
+                # generate a DataFrame and to write it to disk
                 sleep(0.1)
                 # then check if the WRITE_TO_FILE is cleared, 
                 # that is, the file handler has opend new file
@@ -495,16 +501,35 @@ class DataHandler:
         self.record = None
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logging.debug('Started DataHandler data_handler loop with PID %d', getpid())
+
+        record_list_buffer = []
         while self.KEEP_RUNNING:
             sleep(0.01)
             if self.WRITE_TO_FILE.is_set():
-                # write to file, call for new DataFrame,
-                # close old file and open new one
-                self._write_mw_link_record_to_file()
-                self.NEW_DataFrame.set()
-                self._close_file()
-                self._open_new_file()
-                
+                print 'WRITE TO FILE NOW...please...'
+
+                if len(record_list_buffer) > 0:
+                    # Build a DataFrame from the data records which
+                    # were received from the queue
+                    logging.debug('_data_handler: generating DataFrame')
+                    df_list = [pd.DataFrame(record) for
+                               record in record_list_buffer]
+                    df = pd.concat(df_list)
+                    df = df.set_index('Timestamp_UTC')
+                    df = reorder_columns_of_DataFrame(df)
+
+                    logging.debug('_data_handler: call write to file functions')
+                    # write to new file
+                    self._open_new_file()
+                    self._write_mw_link_record_to_file(df)
+                    self._close_file()
+
+                    record_list_buffer = []
+                    logging.debug('_data_handler: --- Starting new data '
+                                  'record buffer ---')
+                else:
+                    logging.debug('_data handler: No data to write')
+
                 self.WRITE_TO_FILE.clear()
 
             # get data from queue and write to DataFrame which will
@@ -518,23 +543,15 @@ class DataHandler:
                 queue_item = self.query_results_queue.get()
                 # print 'queue_item ', queue_item
                 if queue_item == STOP_MESSAGE:
+                    self.KEEP_RUNNING = False
                     break
                 if type(queue_item) == list:
                     record_list = queue_item
                 else:
                     record_list = [queue_item, ]
 
-                if self.NEW_DataFrame.is_set():
-                    self.df = pd.DataFrame()
-                    # self.df.set_index('Timestamp_UTC', inplace=True)
-                    self.NEW_DataFrame.clear()
-                    logging.debug('----- NEW DataFrame ----')
-
                 for record in record_list:
-                    df_temp = pd.DataFrame(record)
-                    df_temp.set_index('Timestamp_UTC', inplace=True)
-                    self.df = self.df.append(df_temp)
-                    self.df = reorder_columns_of_DataFrame(self.df)
+                    record_list_buffer.append(record)
 
                 # print ''
                 # print self.df.sort_index()
@@ -648,14 +665,13 @@ class DataHandler:
         else:
             pass
 
-    def _write_mw_link_record_to_file(self):
+    def _write_mw_link_record_to_file(self, df):
         # Write data to file if the DataFrame is
-        # not the empty one which was initialized
-        # in __init__.
-        if not self.df.empty:
-            self.df.sort_index().to_csv(self.data_file,
-                                        na_rep='NaN',
-                                        float_format='%.3f')
+        # not the empty
+        if not df.empty:
+            df.sort_index().to_csv(self.data_file,
+                                   na_rep='NaN',
+                                   float_format='%.3f')
 
     def _move_files_to_archive(self):
         pass
